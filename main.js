@@ -11,6 +11,7 @@ const {
   nativeTheme,
   BrowserWindow,
   screen,
+  Menu,
 } = require('electron');
 const path = require('path');
 const { pathToFileURL } = require('url');
@@ -34,6 +35,7 @@ let currentUsage = { fiveHour: '--', week: '--', month: '--' }; // 最近一次�
 let settingsWin = null;
 let ballWin = null;
 let mb = null;
+let isQuitting = false; // 标记是否真正退出;退出时允许关闭窗口,否则只隐藏
 
 // ---------- 配置读写 ----------
 
@@ -166,7 +168,7 @@ async function renderTray(text) {
 // ---------- Windows:悬浮球 ----------
 
 const BALL_W = 178; // 悬浮球宽
-const BALL_H = 98;  // 悬浮球高
+const BALL_H = 90;  // 悬浮球高(贴合三行内容)
 
 // 悬浮球页面:深色圆角卡片,三行用量,整体可拖动,右上角提供 设置/退出 按钮
 const BALL_HTML = `<!doctype html>
@@ -180,13 +182,13 @@ const BALL_HTML = `<!doctype html>
     -webkit-app-region: drag;               /* 整个卡片可拖动 */
     position:absolute; inset:0;
     box-sizing:border-box;
+    display:flex; flex-direction:column; justify-content:center; /* 内容垂直居中 */
     border-radius:14px;
     background:rgba(28,30,36,0.94);
     border:1px solid rgba(255,255,255,0.12);
-    box-shadow:0 6px 24px rgba(0,0,0,0.35);
     color:#e6e8eb;
     font-family:"Microsoft YaHei","Segoe UI",sans-serif;
-    padding:10px 14px 8px;
+    padding:10px 14px 0px;
   }
   .title { font-size:10px; color:#8a9099; margin-bottom:4px; }
   .row {
@@ -202,7 +204,7 @@ const BALL_HTML = `<!doctype html>
   }
   .btns span {
     width:16px; height:16px; line-height:16px; text-align:center;
-    font-size:10px; border-radius:4px; cursor:pointer; color:#9aa0a8;
+    font-size:12px; border-radius:4px; cursor:pointer; color:#9aa0a8;
   }
   .btns span:hover { background:rgba(255,255,255,0.16); color:#fff; }
   .btns #btn-quit:hover { color:#ff6b6b; }
@@ -281,13 +283,28 @@ function createSettingsWindow() {
     height: 460,
     show: false,
     resizable: false,
+    autoHideMenuBar: true, // 不显示 File/Edit 菜单栏
+    useContentSize: true,  // 尺寸按网页内容区域计算
     alwaysOnTop: true,
     skipTaskbar: true,
     webPreferences: { nodeIntegration: true, contextIsolation: false },
   });
   settingsWin.loadFile('settings.html');
-  // 关闭按钮 → 隐藏而非退出,保持悬浮球继续工作
+
+  // 加载完成后按内容实际高度自适应窗口,消除纵向滚动条
+  settingsWin.webContents.on('did-finish-load', () => {
+    settingsWin.webContents
+      .executeJavaScript('document.documentElement.scrollHeight')
+      .then((h) => {
+        // 宽度固定 440,高度贴合内容(+2 避免因四舍五入出现滚动条)
+        settingsWin.setContentSize(440, h + 2);
+      })
+      .catch(() => {});
+  });
+
+  // 点窗口 ✕ → 仅隐藏(悬浮球继续工作);真正退出(app.quit)时放行关闭
   settingsWin.on('close', (e) => {
+    if (isQuitting) return; // 正在退出:允许关闭,否则 app 无法结束
     e.preventDefault();
     settingsWin.hide();
   });
@@ -363,7 +380,10 @@ ipcMain.on('ball-quit', () => app.quit());
 
 app.whenReady().then(() => {
   // Windows:给应用设置固定的 AppUserModelId,便于任务栏归属与通知
-  if (isWin) app.setAppUserModelId('com.unzoa.arkusageview');
+  if (isWin) {
+    app.setAppUserModelId('com.unzoa.arkusageview');
+    Menu.setApplicationMenu(null); // 去掉默认 File/Edit 菜单栏
+  }
 
   loadConfig();
 
@@ -378,5 +398,6 @@ app.whenReady().then(() => {
 });
 
 app.on('before-quit', () => {
+  isQuitting = true; // 先置标志,保证后续关闭窗口时不再被拦截
   if (timer) clearInterval(timer);
 });
