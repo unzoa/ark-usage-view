@@ -6,6 +6,7 @@ const webid = document.getElementById('webid');
 const cookie = document.getElementById('cookie');
 const usage = document.getElementById('usage');
 const save = document.getElementById('save');
+const quit = document.getElementById('quit');
 
 // 主进程打开窗口时回填已保存的鉴权配置
 ipcRenderer.on('config', (_e, cfg) => {
@@ -26,4 +27,9 @@ save.addEventListener('click', () => {
     X_WEB_ID: webid.value.trim(),
     COOKIE: cookie.value,
   });
+});
+
+// 点击"退出应用":通知主进程真正退出(避免仅在托盘中隐藏窗口)
+quit.addEventListener('click', () => {
+  ipcRenderer.send('quit-app');
 });
