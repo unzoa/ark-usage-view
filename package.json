@@ -6,7 +6,9 @@
   "scripts": {
     "start": "electron .",
     "pack": "electron-builder --mac",
-    "dist": "electron-builder --mac"
+    "dist": "electron-builder --mac",
+    "pack:win": "electron-builder --win",
+    "dist:win": "electron-builder --win"
   },
   "keywords": [
     "ark",
@@ -44,6 +46,18 @@
       ],
       "icon": "build/icon.png",
       "category": "public.app-category.utilities"
+    },
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ],
+      "icon": "build/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "shortcutName": "ArkUsageView"
     }
   }
 }
