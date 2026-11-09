@@ -78,7 +78,7 @@ async function fetchUsage() {
   }
   try {
     const res = await fetch(
-      'https://console.volcengine.com/api/top/ark/cn-beijing/2024-01-01/GetCodingPlanUsage?',
+      'https://console.volcengine.com/api/top/ark/cn-beijing/2024-01-01/GetAgentPlanAFPUsage?',
       {
         method: 'POST',
         headers: {
@@ -88,19 +88,19 @@ async function fetchUsage() {
           'x-web-id': X_WEB_ID,
           cookie: COOKIE,
           referer:
-            'https://console.volcengine.com/ark/region:cn-beijing/subscription/coding-plan?agentMode=close',
+            'https://console.volcengine.com/ark/region:cn-beijing/subscription/agent-plan',
         },
         body: '{}',
       }
     );
     const json = await res.json();
-    const { QuotaUsage } = json.Result;
+    const { AFPFiveHour, AFPWeekly, AFPMonthly } = json.Result;
     // 依次为 5小时 / 1周 / 1月 的用量百分比
     const pct = (v) => (v || 0).toFixed(2) + '%';
     currentUsage = {
-      fiveHour: pct(QuotaUsage[0].Percent),
-      week: pct(QuotaUsage[1].Percent),
-      month: pct(QuotaUsage[2].Percent),
+      fiveHour: pct((AFPFiveHour.Used / AFPFiveHour.Quota || 0) * 100),
+      week: pct((AFPWeekly.Used / AFPWeekly.Quota || 0) * 100),
+      month: pct((AFPMonthly.Used / AFPMonthly.Quota || 0) * 100),
     };
     updateDisplay(`🐟 ${currentUsage.fiveHour}  🐙 ${currentUsage.week}  🐳 ${currentUsage.month}`);
     sendToWindow();
@@ -335,6 +335,9 @@ function setupMacMenubar() {
       width: 440,
       height: 460,
       resizable: false,
+      // 置顶(与 Windows 设置窗口一致):menubar 对置顶窗口失焦时只发 focus-lost、
+      // 不会执行 hideWindow,因此点击窗口外部不会自动隐藏,只在点【保存】/【退出】时才收起
+      alwaysOnTop: true,
       webPreferences: {
         nodeIntegration: true,
         contextIsolation: false,

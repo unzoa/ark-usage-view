@@ -6,7 +6,7 @@
 
 - macos顶部栏显示用量
 - 点击能输入 X_CSRF_TOKEN 和 X_WEB_ID 、COOKIE
-  - 访问 https://console.volcengine.com/ark/region:cn-beijing/subscription/coding-plan?agentMode=close
+  - 访问 https://console.volcengine.com/ark/region:cn-beijing/subscription/agent-plan
     - 复制 cookie，x-csrf-token 和 x-web-id
 - 2s刷新一次用量
 
