@@ -25,8 +25,10 @@ const isWin = process.platform === 'win32';
 const CONFIG_FILE = () => path.join(app.getPath('userData'), 'config.json');
 
 let config = {};          // 已保存的鉴权配置
-let timer = null;         // 2s 刷新定时器
+let timer = null;         // 30s 刷新定时器
 let currentUsage = { fiveHour: '--', week: '--', month: '--' }; // 最近一次用量
+let fetching = false; // 在途请求锁:任意时刻只允许一个在途请求,杜绝并发乱序覆盖
+// let reqNo = 0;        // 请求顺序号:仅用于日志标记(暂注释,正常运行时无需日志)
 
 // 窗口引用:
 //   settingsWin - 设置窗口(Windows 下自建;macOS 下用 menubar 的 mb.window)
@@ -70,13 +72,19 @@ function sendToWindow() {
 // ---------- 拉取 ARK 用量 ----------
 
 async function fetchUsage() {
-  const { X_CSRF_TOKEN, X_WEB_ID, COOKIE } = config;
-  // 未配置完整鉴权信息时不请求,显示占位
-  if (!X_CSRF_TOKEN || !X_WEB_ID || !COOKIE) {
-    updateDisplay('ARK --');
-    return;
-  }
+  // 已有请求在途(来自轮询或点保存)则跳过,保证任意时刻只有一个在途请求
+  if (fetching) return;
+  fetching = true; // 占用在途锁
   try {
+    const { X_CSRF_TOKEN, X_WEB_ID, COOKIE } = config;
+    // 未配置完整鉴权信息时不请求,显示占位
+    if (!X_CSRF_TOKEN || !X_WEB_ID || !COOKIE) {
+      updateDisplay('ARK --');
+      return;
+    }
+    // 日志①:记录请求发出顺序号与时刻(暂注释,正常运行时无需日志)
+    // const no = ++reqNo; // 本次请求顺序号(真正发请求时才递增)
+    // console.log(`[req #${no} ${new Date().toLocaleTimeString()}] send`);
     const res = await fetch(
       'https://console.volcengine.com/api/top/ark/cn-beijing/2024-01-01/GetAgentPlanAFPUsage?',
       {
@@ -102,19 +110,36 @@ async function fetchUsage() {
       week: pct((AFPWeekly.Used / AFPWeekly.Quota || 0) * 100),
       month: pct((AFPMonthly.Used / AFPMonthly.Quota || 0) * 100),
     };
-    updateDisplay(`🐟 ${currentUsage.fiveHour}  🐙 ${currentUsage.week}  🐳 ${currentUsage.month}`);
+    // 日志②:记录返回顺序号、时刻及解析后的三行值(暂注释,正常运行时无需日志)
+    // console.log(
+    //   `[req #${no} ${new Date().toLocaleTimeString()}] recv ` +
+    //   `fiveHour=${currentUsage.fiveHour} week=${currentUsage.week} month=${currentUsage.month} ` +
+    //   `raw=${JSON.stringify({ AFPFiveHour, AFPWeekly, AFPMonthly })}`
+    // );
+    await updateDisplay(`🐟 ${currentUsage.fiveHour}  🐙 ${currentUsage.week}  🐳 ${currentUsage.month}`);
     sendToWindow();
   } catch {
-    updateDisplay('ARK --');
+    // 日志③:本次请求异常,打印顺序号与错误(暂注释,正常运行时无需日志)
+    // console.log(`[req #${no} ${new Date().toLocaleTimeString()}] error`, err);
+    await updateDisplay('ARK --'); // 失败也等待展示完成,保持与锁的时序一致
+  } finally {
+    fetching = false; // 无论成败都释放锁,放行下一轮请求
   }
 }
 
+// 串行轮询:等本次请求结束(赋值完成后)再间隔 30s 发起下一轮,避免并发请求乱序
+async function pollUsage() {
+  await fetchUsage(); // fetchUsage 内部 await 网络返回,返回时 currentUsage 已更新完毕
+  timer = setTimeout(pollUsage, 30000); // 只在前一轮结束后才排下一轮
+}
+
 // 统一的用量展示入口:macOS 画文字图片到顶部栏;Windows 更新悬浮球三行
-function updateDisplay(text) {
+// async 化并等待 DOM 更新完成,确保与下一轮请求之间不产生展示竞态
+async function updateDisplay(text) {
   if (isWin) {
-    updateBall();
+    await updateBall();
   } else {
-    renderTray(text);
+    await renderTray(text);
   }
 }
 
@@ -265,10 +290,10 @@ function createBallWindow() {
   updateBall();
 }
 
-// 把最新用量写入悬浮球的三行
+// 把最新用量写入悬浮球的三行(返回 Promise 便于上层 await,保证 DOM 更新完整落地)
 function updateBall() {
-  if (!ballWin || ballWin.isDestroyed()) return;
-  ballWin.webContents
+  if (!ballWin || ballWin.isDestroyed()) return Promise.resolve();
+  return ballWin.webContents
     .executeJavaScript(`
       document.getElementById('h5').textContent = ${JSON.stringify(currentUsage.fiveHour)};
       document.getElementById('w1').textContent = ${JSON.stringify(currentUsage.week)};
@@ -348,8 +373,7 @@ function setupMacMenubar() {
   mb.on('ready', () => {
     mb.tray.setImage(nativeImage.createEmpty()); // 图标置空,菜单栏只显示标题文字
     loadConfig();
-    fetchUsage(); // 启动立即拉一次
-    timer = setInterval(fetchUsage, 2000); // 每 2s 刷新一次用量
+    pollUsage(); // 启动立即拉一次并串行轮询
   });
 
   // 每次打开窗口时把已存配置和当前用量回填到表单
@@ -393,8 +417,7 @@ app.whenReady().then(() => {
   if (isWin) {
     createSettingsWindow();
     createBallWindow();
-    fetchUsage(); // 启动立即拉一次
-    timer = setInterval(fetchUsage, 2000); // 每 2s 刷新一次用量
+    pollUsage(); // 启动立即拉一次并串行轮询
   } else {
     setupMacMenubar();
   }
@@ -402,5 +425,5 @@ app.whenReady().then(() => {
 
 app.on('before-quit', () => {
   isQuitting = true; // 先置标志,保证后续关闭窗口时不再被拦截
-  if (timer) clearInterval(timer);
+  if (timer) clearTimeout(timer); // timer 现为 setTimeout 句柄,用 clearTimeout 清理
 });
