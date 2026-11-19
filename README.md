@@ -5,10 +5,11 @@
 ## 功能
 
 - macos顶部栏显示用量
-- ark-api: GetAgentPlanAFPUsage
+- ark-api: GetAgentPlanSeatAFPUsage
 - 点击能输入 X_CSRF_TOKEN 和 X_WEB_ID 、COOKIE
-  - 访问 https://console.volcengine.com/ark/region:cn-beijing/subscription/agent-plan
+  - 访问 https://console.volcengine.com/ark/region:cn-beijing/subscription/agent-plan-enterprise?tab=subscription
     - 复制 cookie，x-csrf-token 和 x-web-id
+    - 在订阅页 Seat 列表复制 Seat ID（形如 `seat-20261119112646-hd4sx`）
 - 30s刷新一次用量
 
 ## 示例代码

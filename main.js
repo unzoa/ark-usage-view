@@ -28,7 +28,7 @@ let config = {};          // 已保存的鉴权配置
 let timer = null;         // 30s 刷新定时器
 let currentUsage = { fiveHour: '--', week: '--', month: '--' }; // 最近一次用量
 let fetching = false; // 在途请求锁:任意时刻只允许一个在途请求,杜绝并发乱序覆盖
-// let reqNo = 0;        // 请求顺序号:仅用于日志标记(暂注释,正常运行时无需日志)
+let reqNo = 0;        // 请求顺序号:仅用于日志标记
 
 // 窗口引用:
 //   settingsWin - 设置窗口(Windows 下自建;macOS 下用 menubar 的 mb.window)
@@ -73,36 +73,71 @@ function sendToWindow() {
 
 async function fetchUsage() {
   // 已有请求在途(来自轮询或点保存)则跳过,保证任意时刻只有一个在途请求
-  if (fetching) return;
+  if (fetching) {
+    console.log('[ARK] 上一轮请求仍在进行,跳过本轮');
+    return;
+  }
   fetching = true; // 占用在途锁
+  const no = ++reqNo; // 本次请求顺序号,便于日志对照
+  const t0 = Date.now(); // 请求耗时起点
   try {
-    const { X_CSRF_TOKEN, X_WEB_ID, COOKIE } = config;
-    // 未配置完整鉴权信息时不请求,显示占位
-    if (!X_CSRF_TOKEN || !X_WEB_ID || !COOKIE) {
+    const { X_CSRF_TOKEN, X_WEB_ID, COOKIE, SEAT_ID } = config;
+    // 未配置完整鉴权信息(含 Seat ID)时不请求,显示占位
+    if (!X_CSRF_TOKEN || !X_WEB_ID || !COOKIE || !SEAT_ID) {
+      const missing = [
+        !X_CSRF_TOKEN && 'X_CSRF_TOKEN',
+        !X_WEB_ID && 'X_WEB_ID',
+        !COOKIE && 'COOKIE',
+        !SEAT_ID && 'SEAT_ID',
+      ].filter(Boolean);
+      console.warn(`[ARK] #${no} 配置不完整,缺少: ${missing.join(', ')}`);
       updateDisplay('ARK --');
       return;
     }
-    // 日志①:记录请求发出顺序号与时刻(暂注释,正常运行时无需日志)
-    // const no = ++reqNo; // 本次请求顺序号(真正发请求时才递增)
-    // console.log(`[req #${no} ${new Date().toLocaleTimeString()}] send`);
+    console.log(`[ARK] #${no} 发起请求 seat=${SEAT_ID}`);
     const res = await fetch(
-      'https://console.volcengine.com/api/top/ark/cn-beijing/2024-01-01/GetAgentPlanAFPUsage?',
+      'https://console.volcengine.com/api/top/ark/cn-beijing/2024-01-01/GetAgentPlanSeatAFPUsage?',
       {
         method: 'POST',
         headers: {
           accept: 'application/json, text/plain, */*',
+          'accept-language': 'zh',
+          'cache-control': 'no-cache',
           'content-type': 'application/json',
+          pragma: 'no-cache',
+          priority: 'u=1, i',
           'x-csrf-token': X_CSRF_TOKEN,
           'x-web-id': X_WEB_ID,
           cookie: COOKIE,
           referer:
-            'https://console.volcengine.com/ark/region:cn-beijing/subscription/agent-plan',
+            'https://console.volcengine.com/ark/region:cn-beijing/subscription/agent-plan-enterprise?tab=subscription',
         },
-        body: '{}',
+        // 接口按 Seat 查询配额:必须携带 SeatIDs,否则返回结构不可用
+        body: JSON.stringify({ SeatIDs: [SEAT_ID] }),
       }
     );
-    const json = await res.json();
-    const { AFPFiveHour, AFPWeekly, AFPMonthly } = json.Result;
+    // 先读文本再手动解析:既能打印完整原始响应,也能在非 JSON 响应时给出明确日志
+    const raw = await res.text();
+    console.log(
+      `[ARK] #${no} HTTP ${res.status} ${res.statusText} 耗时${Date.now() - t0}ms`
+    );
+    console.log(`[ARK] #${no} 原始响应:`, raw);
+    let json;
+    try {
+      json = JSON.parse(raw);
+    } catch (e) {
+      console.error(`[ARK] #${no} 响应不是合法 JSON:`, e.message);
+      await updateDisplay('ARK --');
+      return;
+    }
+    // Seat 接口返回 Result.SeatAFPUsages 数组,取首个 Seat 的用量
+    const seatUsage = json && json.Result && json.Result.SeatAFPUsages && json.Result.SeatAFPUsages[0];
+    if (!seatUsage) {
+      console.error(`[ARK] #${no} 响应中没有 Result.SeatAFPUsages:`, json);
+      await updateDisplay('ARK --');
+      return;
+    }
+    const { AFPFiveHour, AFPWeekly, AFPMonthly } = seatUsage;
     // 依次为 5小时 / 1周 / 1月 的用量百分比
     const pct = (v) => (v || 0).toFixed(2) + '%';
     currentUsage = {
@@ -110,17 +145,14 @@ async function fetchUsage() {
       week: pct((AFPWeekly.Used / AFPWeekly.Quota || 0) * 100),
       month: pct((AFPMonthly.Used / AFPMonthly.Quota || 0) * 100),
     };
-    // 日志②:记录返回顺序号、时刻及解析后的三行值(暂注释,正常运行时无需日志)
-    // console.log(
-    //   `[req #${no} ${new Date().toLocaleTimeString()}] recv ` +
-    //   `fiveHour=${currentUsage.fiveHour} week=${currentUsage.week} month=${currentUsage.month} ` +
-    //   `raw=${JSON.stringify({ AFPFiveHour, AFPWeekly, AFPMonthly })}`
-    // );
+    console.log(
+      `[ARK] #${no} 解析完成: 5小时=${currentUsage.fiveHour} ` +
+      `1周=${currentUsage.week} 1月=${currentUsage.month}`
+    );
     await updateDisplay(`🐟 ${currentUsage.fiveHour}  🐙 ${currentUsage.week}  🐳 ${currentUsage.month}`);
     sendToWindow();
-  } catch {
-    // 日志③:本次请求异常,打印顺序号与错误(暂注释,正常运行时无需日志)
-    // console.log(`[req #${no} ${new Date().toLocaleTimeString()}] error`, err);
+  } catch (err) {
+    console.error(`[ARK] #${no} 请求异常 耗时${Date.now() - t0}ms:`, err);
     await updateDisplay('ARK --'); // 失败也等待展示完成,保持与锁的时序一致
   } finally {
     fetching = false; // 无论成败都释放锁,放行下一轮请求
@@ -130,6 +162,7 @@ async function fetchUsage() {
 // 串行轮询:等本次请求结束(赋值完成后)再间隔 30s 发起下一轮,避免并发请求乱序
 async function pollUsage() {
   await fetchUsage(); // fetchUsage 内部 await 网络返回,返回时 currentUsage 已更新完毕
+  console.log('[ARK] 下一轮轮询将在 30s 后执行');
   timer = setTimeout(pollUsage, 30000); // 只在前一轮结束后才排下一轮
 }
 
@@ -358,7 +391,7 @@ function setupMacMenubar() {
     tooltip: 'ARK 用量查看',
     browserWindow: {
       width: 440,
-      height: 460,
+      height: 520,
       resizable: false,
       // 置顶(与 Windows 设置窗口一致):menubar 对置顶窗口失焦时只发 focus-lost、
       // 不会执行 hideWindow,因此点击窗口外部不会自动隐藏,只在点【保存】/【退出】时才收起
@@ -385,6 +418,13 @@ function setupMacMenubar() {
 
 // 渲染进程点击"保存"后落盘并立即刷新,再收起窗口
 ipcMain.on('save-config', (_e, cfg) => {
+  // 只打印字段是否齐全,不输出令牌/Cookie 明文
+  console.log('[ARK] 保存配置:', {
+    hasToken: !!cfg.X_CSRF_TOKEN,
+    hasWebId: !!cfg.X_WEB_ID,
+    hasCookie: !!cfg.COOKIE,
+    SEAT_ID: cfg.SEAT_ID || '(空)',
+  });
   saveConfig(cfg);
   fetchUsage();
   if (isWin) {

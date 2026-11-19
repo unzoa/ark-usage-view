@@ -4,6 +4,7 @@ const { ipcRenderer } = require('electron');
 const token = document.getElementById('token');
 const webid = document.getElementById('webid');
 const cookie = document.getElementById('cookie');
+const seatid = document.getElementById('seatid');
 const usage = document.getElementById('usage');
 const save = document.getElementById('save');
 const quit = document.getElementById('quit');
@@ -13,6 +14,7 @@ ipcRenderer.on('config', (_e, cfg) => {
   token.value = cfg.X_CSRF_TOKEN || '';
   webid.value = cfg.X_WEB_ID || '';
   cookie.value = cfg.COOKIE || '';
+  seatid.value = cfg.SEAT_ID || '';
 });
 
 // 主进程每 2s 推送一次最新用量
@@ -26,6 +28,7 @@ save.addEventListener('click', () => {
     X_CSRF_TOKEN: token.value.trim(),
     X_WEB_ID: webid.value.trim(),
     COOKIE: cookie.value,
+    SEAT_ID: seatid.value.trim(),
   });
 });
 
